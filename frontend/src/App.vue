@@ -28,7 +28,7 @@
       <div class="grid-panel">
         <div class="grid-panel__head">
           <span class="grid-panel__title">印染车间 · 模块启动台</span>
-          <span class="grid-panel__hint">点击格子切换模块（{{ routes.length }} 个入口 / 6 个模块）</span>
+          <span class="grid-panel__hint">点击格子切换模块（{{ routes.length }} 个入口 / 7 个模块）</span>
         </div>
         <div class="grid-9">
           <div
@@ -66,6 +66,7 @@ const ICONS = {
   running: ['M10 13V5a2 2 0 114 0v8a4 4 0 11-4 0z', 'M12 9v6'],
   stat: ['M3 20h18', 'M6 20V12', 'M11 20V6', 'M16 20v-6'],
   dye: ['M12 3s6 6.5 6 10.5a6 6 0 11-12 0C6 9.5 12 3 12 3z'],
+  schedule: ['M4 6h16v15H4z', 'M4 10h16', 'M8 3v4', 'M16 3v4', 'M8 15h3v3H8z'],
   alert: ['M12 4l9 16H3z', 'M12 10v4', 'M12 17h.01']
 }
 

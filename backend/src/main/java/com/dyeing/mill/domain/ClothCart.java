@@ -66,6 +66,14 @@ public class ClothCart {
     @Column(name = "rework_times")
     private Integer reworkTimes;
 
+    /** 交期（换色排程输入，排程台可改，不影响布车状态） */
+    @Column(name = "due_time")
+    private LocalDateTime dueTime;
+
+    /** 急单标记 0/1（换色排程输入） */
+    @Column(name = "urgent")
+    private Integer urgent = 0;
+
     @Column(name = "deleted")
     private Integer deleted = 0;
 }

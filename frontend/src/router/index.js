@@ -5,22 +5,26 @@ import CurveEditor from '../views/CurveEditor.vue'
 import CartKanban from '../views/CartKanban.vue'
 import ExecutionOrders from '../views/ExecutionOrders.vue'
 import Inventory from '../views/Inventory.vue'
+import ScheduleBoard from '../views/ScheduleBoard.vue'
 
 /**
- * 六个业务模块。启动台 10 个格子共用这些页面，
- * 其中 4 个格子是带预设参数的快捷入口（同一页面不同落点）。
+ * 业务模块。启动台格子共用这些页面，
+ * 其中部分格子是带预设参数的快捷入口（同一页面不同落点）。
  */
 export const routes = [
+  { path: '/schedule', name: '换色排程台', desc: '跨缸甘特 · 清洗矩阵 · 锁定与方案留存', icon: 'schedule', component: ScheduleBoard, query: {} },
   { path: '/vats', name: '染缸缸位', desc: '温度环阵列 · 控温面板', icon: 'vat', component: VatBoard, query: {} },
   { path: '/recipes', name: '染色配方', desc: '色卡条 · 染料阶梯表', icon: 'recipe', component: RecipeLab, query: {} },
   { path: '/curves', name: '工艺曲线', desc: 'SVG 节点可拖动编辑器', icon: 'curve', component: CurveEditor, query: {} },
   { path: '/carts', name: '布车流转', desc: '三列看板 · 原生拖拽', icon: 'cart', component: CartKanban, query: {} },
   { path: '/execution', name: '开缸执行单', desc: '资料核对 · 失效锁定 · 下达快照', icon: 'execution', component: ExecutionOrders, query: {} },
   { path: '/inventory', name: '染化料库存', desc: '库存 · 预警 · 领用', icon: 'stock', component: Inventory, query: {} },
+  { path: '/schedule', name: '排除与延后', desc: '容量/机型/资料/维护原因单列', icon: 'alert', component: ScheduleBoard, query: { tab: 'exceptions' } },
+  { path: '/schedule', name: '清洗矩阵', desc: '四类换色规则与方案版本', icon: 'dye', component: ScheduleBoard, query: { tab: 'rules' } },
   { path: '/vats', name: '在制缸位', desc: '只看升温/保温中的缸', icon: 'running', component: VatBoard, query: { view: 'running' } },
   { path: '/recipes', name: '色号缸次', desc: '按色号统计缸次与米数', icon: 'stat', component: RecipeLab, query: { view: 'stat' } },
   { path: '/inventory', name: '染料库存', desc: '只看染料（DYE）', icon: 'dye', component: Inventory, query: { tab: 'DYE' } },
-  { path: '/inventory', name: '库存预警', desc: '低于安全库存的染化料', icon: 'alert', component: Inventory, query: { tab: 'alerts' } }
+  { path: '/inventory', name: '库存预警', desc: '低于安全库存的染化料', icon: 'alert2', component: Inventory, query: { tab: 'alerts' } }
 ]
 
 function parse(hash) {

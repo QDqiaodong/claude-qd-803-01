@@ -6,6 +6,10 @@
 
 SET NAMES utf8mb4;
 
+DROP TABLE IF EXISTS schedule_plan;
+DROP TABLE IF EXISTS schedule_lock;
+DROP TABLE IF EXISTS vat_maintenance;
+DROP TABLE IF EXISTS cleaning_rule_version;
 DROP TABLE IF EXISTS vat_execution_order;
 DROP TABLE IF EXISTS issue_record;
 DROP TABLE IF EXISTS chemical_stock;
@@ -133,12 +137,93 @@ CREATE TABLE cloth_cart (
     dye_start_time DATETIME      NULL COMMENT '计划开始',
     dye_end_time   DATETIME      NULL COMMENT '计划结束',
     rework_times   INT           NOT NULL DEFAULT 0 COMMENT '返修次数',
+    due_time       DATETIME      NULL COMMENT '交期（换色排程输入）',
+    urgent         TINYINT       NOT NULL DEFAULT 0 COMMENT '急单标记（换色排程输入）',
     deleted        TINYINT       NOT NULL DEFAULT 0,
     PRIMARY KEY (id),
     UNIQUE KEY uk_cart_code (cart_code),
     KEY idx_cart_status (status),
     KEY idx_cart_vat (vat_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='布车流转';
+
+-- ---------------- 换色清洗规则版本（矩阵整体版本化，旧方案按当时版本复算） ----------------
+CREATE TABLE cleaning_rule_version (
+    id              BIGINT       NOT NULL AUTO_INCREMENT,
+    version_code    VARCHAR(32)  NOT NULL COMMENT '规则版本号 RV-001',
+    status          VARCHAR(16)  NOT NULL COMMENT 'ACTIVE 当前生效 / ARCHIVED 历史归档',
+    matrix_json     LONGTEXT     NOT NULL COMMENT '颜色族 × 深浅档 × 特殊染料的清洗矩阵快照',
+    fabric_machine_json LONGTEXT NOT NULL COMMENT '布种适配机机型矩阵快照',
+    params_json     LONGTEXT     NOT NULL COMMENT '排程参数（逾期/空档/清洗权重、折算系数等）',
+    remark          VARCHAR(200) NULL,
+    created_by      VARCHAR(32)  NULL,
+    create_time     DATETIME     NULL,
+    archived_time   DATETIME     NULL,
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_rule_version_code (version_code),
+    KEY idx_rule_status (status)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='换色清洗规则版本';
+
+-- ---------------- 染缸设备维护时段 ----------------
+CREATE TABLE vat_maintenance (
+    id          BIGINT       NOT NULL AUTO_INCREMENT,
+    vat_id      BIGINT       NOT NULL,
+    vat_code    VARCHAR(32)  NOT NULL,
+    start_time  DATETIME     NOT NULL COMMENT '维护开始',
+    end_time    DATETIME     NOT NULL COMMENT '维护结束',
+    reason      VARCHAR(200) NOT NULL COMMENT '维护原因',
+    create_time DATETIME     NULL,
+    deleted     TINYINT      NOT NULL DEFAULT 0,
+    PRIMARY KEY (id),
+    KEY idx_maint_vat (vat_id, start_time)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='染缸设备维护时段';
+
+-- ---------------- 人工锁定段（调度员承诺的缸与时段，重算只动未锁定未来区段） ----------------
+CREATE TABLE schedule_lock (
+    id            BIGINT       NOT NULL AUTO_INCREMENT,
+    cart_id       BIGINT       NOT NULL,
+    cart_code     VARCHAR(32)  NOT NULL,
+    vat_id        BIGINT       NOT NULL,
+    vat_code      VARCHAR(32)  NOT NULL,
+    start_time    DATETIME     NOT NULL,
+    end_time      DATETIME     NOT NULL,
+    note          VARCHAR(200) NULL COMMENT '承诺说明',
+    rule_version_id BIGINT     NOT NULL COMMENT '锁定时适用的规则版本',
+    locked_by     VARCHAR(32)  NULL,
+    locked_time   DATETIME     NULL,
+    deleted       TINYINT      NOT NULL DEFAULT 0,
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_lock_active_cart (cart_id),
+    KEY idx_lock_vat (vat_id, start_time)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='换色排程人工锁定段';
+
+-- ---------------- 换色排程方案（多方案留存，仅一个 REFERENCE 车间参考） ----------------
+CREATE TABLE schedule_plan (
+    id                BIGINT       NOT NULL AUTO_INCREMENT,
+    plan_code         VARCHAR(40)  NOT NULL COMMENT '方案编号',
+    name              VARCHAR(64)  NOT NULL COMMENT '方案名称',
+    plan_kind         VARCHAR(16)  NOT NULL COMMENT 'DRAFT 工作草案 / SNAPSHOT 留存快照',
+    status            VARCHAR(16)  NOT NULL DEFAULT 'ACTIVE' COMMENT 'REFERENCE 车间参考 / ACTIVE 普通 / ARCHIVED 已弃用',
+    rule_version_id   BIGINT       NOT NULL COMMENT '采用的规则版本',
+    rule_version_code VARCHAR(32)  NOT NULL,
+    horizon_start     DATETIME     NOT NULL COMMENT '排程起点',
+    horizon_end       DATETIME     NOT NULL COMMENT '排程终点',
+    input_snapshot_json LONGTEXT   NOT NULL COMMENT '排程时输入冻结快照（布车/染缸/维护/锁定），旧方案据此复算',
+    result_json       LONGTEXT     NOT NULL COMMENT '排程结果（条目/清洗段/指标/每车解释）',
+    stats_json        LONGTEXT     NOT NULL COMMENT '汇总指标（逾期/空档/清洗占时与成本）',
+    input_fingerprint CHAR(64)     NOT NULL COMMENT '输入 SHA-256，异步重算结果必须匹配最新输入',
+    scheduled_count   INT          NOT NULL DEFAULT 0,
+    delayed_count     INT          NOT NULL DEFAULT 0,
+    excluded_count    INT          NOT NULL DEFAULT 0,
+    locked_count      INT          NOT NULL DEFAULT 0,
+    created_by        VARCHAR(32)  NULL,
+    create_time       DATETIME     NULL,
+    compute_ms        BIGINT       NOT NULL DEFAULT 0,
+    deleted           TINYINT      NOT NULL DEFAULT 0,
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_plan_code (plan_code),
+    KEY idx_plan_status (status),
+    KEY idx_plan_kind (plan_kind)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='染缸换色排程方案';
 
 -- ---------------- 开缸执行单 ----------------
 CREATE TABLE vat_execution_order (
@@ -249,7 +334,8 @@ INSERT INTO recipe (id, recipe_code, color_code, color_name, customer, fabric_ty
  (5, 'R-2405', 'C-1905', '雪青',   '华孚色纺', 'VISCOSE', 1, '#6B4A8F', 48.20, 22.10, -26.80, 'DRAFT',    100.000, 162.06, '2026-08-20 16:30:00', 0),
  (6, 'R-2406', 'C-1906', '米白',   '恒生纺织', 'SILK',    1, '#D8D3C4', 88.40,  0.60,   6.20, 'RELEASED', 100.000, 79.44, '2026-08-22 09:00:00', 0),
  (7, 'R-2407', 'C-1907', '元黑',   '申洲针织', 'POLY',    2, '#1F1F1F', 16.80,  0.40,  -1.20, 'RELEASED', 100.000, 100.30, '2026-08-25 15:20:00', 0),
- (8, 'R-2408', 'C-1908', '湖蓝',   '雅戈尔',   'COTTON',  1, '#2E8BC0', 56.20, -12.60, -32.10, 'DRAFT',    100.000, 133.44, '2026-08-28 08:45:00', 0);
+ (8, 'R-2408', 'C-1908', '湖蓝',   '雅戈尔',   'COTTON',  1, '#2E8BC0', 56.20, -12.60, -32.10, 'DRAFT',    100.000, 133.44, '2026-08-28 08:45:00', 0),
+ (9, 'R-2409', 'C-1903', '墨绿',   '申洲针织', 'WOOL',    1, '#0F6E4F', 40.20, -19.10, 11.80, 'RELEASED', 100.000, 142.30, '2026-09-02 10:00:00', 0);
 
 -- 配方明细（染料 owf 合计 100%，助剂单列不计入）
 INSERT INTO recipe_item (id, recipe_id, seq_no, item_type, dye_name, owf_percent, unit_price, color_hex, deleted) VALUES
@@ -298,7 +384,10 @@ INSERT INTO recipe_item (id, recipe_id, seq_no, item_type, dye_name, owf_percent
  (43, 8, 3, 'DYE', '活性嫩黄 4GL',     14.000,  96.00, '#F1C40F', 0),
  (44, 8, 4, 'AUX', '元明粉(盐)',       50.000,   1.20, '#D9D9D9', 0),
  (45, 8, 5, 'AUX', '纯碱',             18.000,   2.60, '#EFEFEF', 0),
- (46, 8, 6, 'AUX', '匀染剂 AL-200',     1.200,  24.00, '#8E7CC3', 0);
+ (46, 8, 6, 'AUX', '匀染剂 AL-200',     1.200,  24.00, '#8E7CC3', 0),
+ (47, 9, 1, 'DYE', '弱酸绿 2G',        55.000, 158.00, '#0F6E4F', 0),
+ (48, 9, 2, 'DYE', '弱酸黄 4G',        28.000, 122.00, '#C9B400', 0),
+ (49, 9, 3, 'DYE', '弱酸蓝 5R',        17.000, 140.00, '#1B4F72', 0);
 
 -- 工艺曲线（6 条）
 INSERT INTO process_curve (id, curve_code, curve_name, fabric_type, color_code, recipe_id, start_temp, total_minutes, max_ramp_rate, deleted) VALUES
@@ -307,7 +396,8 @@ INSERT INTO process_curve (id, curve_code, curve_name, fabric_type, color_code, 
  (3, 'PC-003', '锦纶酸性染色曲线',     'NYLON',   'C-1903', 3, 30.0, 115, 1.50, 0),
  (4, 'PC-004', '涤棉混纺一浴法曲线',   'BLEND',   'C-1904', 4, 30.0, 120, 2.50, 0),
  (5, 'PC-005', '人棉活性低温曲线',     'VISCOSE', 'C-1905', 5, 30.0, 125, 1.40, 0),
- (6, 'PC-006', '真丝低温慢升曲线',     'SILK',    'C-1906', 6, 30.0, 135, 1.00, 0);
+ (6, 'PC-006', '真丝低温慢升曲线',     'SILK',    'C-1906', 6, 30.0, 135, 1.00, 0),
+ (7, 'PC-007', '羊毛酸性沸染曲线',     'WOOL',    'C-1903', 9, 30.0, 140, 1.00, 0);
 
 -- 工艺曲线节点（有序序列：升温 → 保温 → 降温）
 INSERT INTO curve_node (id, curve_id, seq_no, stage, target_temp, duration_min, ramp_rate, memo) VALUES
@@ -344,23 +434,38 @@ INSERT INTO curve_node (id, curve_id, seq_no, stage, target_temp, duration_min, 
  (31, 6, 4, 'HOLD',  85.0, 30,  0.00, '保温'),
  (32, 6, 5, 'COOL',  45.0, 20, -2.00, '降温');
 
--- 布车流转（15 行，含 1 辆报废车，会被 @SQLRestriction 过滤掉）
-INSERT INTO cloth_cart (id, cart_code, fabric_type, meters, color_code, color_name, customer, vat_id, vat_code, status, dye_start_time, dye_end_time, rework_times, deleted) VALUES
- (1,  'C-2401', 'COTTON',  1250.0, 'C-1901', '藏青', '申洲针织', 1,  'V-01', 'DYEING',   '2026-09-27 08:00:00', '2026-09-27 11:30:00', 0, 0),
- (2,  'C-2402', 'POLY',     860.0, 'C-1902', '酒红', '雅戈尔',   2,  'V-02', 'DYEING',   '2026-09-27 08:30:00', '2026-09-27 12:00:00', 0, 0),
- (3,  'C-2403', 'NYLON',   1520.0, 'C-1903', '墨绿', '申洲针织', 3,  'V-03', 'DYEING',   '2026-09-27 09:00:00', '2026-09-27 12:30:00', 0, 0),
- (4,  'C-2404', 'BLEND',    980.0, 'C-1904', '芥黄', '鲁泰纺织', 4,  'V-04', 'DYEING',   '2026-09-27 09:30:00', '2026-09-27 13:00:00', 0, 0),
- (5,  'C-2405', 'VISCOSE', 1100.0, 'C-1905', '雪青', '华孚色纺', 5,  'V-05', 'DYEING',   '2026-09-27 10:00:00', '2026-09-27 13:30:00', 0, 0),
- (6,  'C-2406', 'COTTON',   760.0, 'C-1908', '湖蓝', '雅戈尔',   NULL, NULL, 'PENDING',  NULL, NULL, 0, 0),
- (7,  'C-2407', 'POLY',    1340.0, 'C-1907', '元黑', '申洲针织', NULL, NULL, 'PENDING',  NULL, NULL, 0, 0),
- (8,  'C-2408', 'SILK',     420.0, 'C-1906', '米白', '恒生纺织', NULL, NULL, 'PENDING',  NULL, NULL, 0, 0),
- (9,  'C-2409', 'COTTON',  1580.0, 'C-1901', '藏青', '恒生纺织', NULL, NULL, 'PENDING',  NULL, NULL, 0, 0),
- (10, 'C-2410', 'COTTON',  1050.0, 'C-1908', '湖蓝', '雅戈尔',   6,  'V-06', 'DONE',     '2026-09-26 08:00:00', '2026-09-26 11:00:00', 0, 0),
- (11, 'C-2411', 'POLY',    1210.0, 'C-1902', '酒红', '雅戈尔',   7,  'V-07', 'DONE',     '2026-09-26 09:00:00', '2026-09-26 12:30:00', 0, 0),
- (12, 'C-2412', 'NYLON',    890.0, 'C-1903', '墨绿', '申洲针织', 8,  'V-08', 'DONE',     '2026-09-26 13:00:00', '2026-09-26 16:30:00', 0, 0),
- (13, 'C-2413', 'VISCOSE',  640.0, 'C-1905', '雪青', '华孚色纺', 9,  'V-09', 'DONE',     '2026-09-26 14:00:00', '2026-09-26 17:00:00', 0, 0),
- (14, 'C-2414', 'SILK',     380.0, 'C-1906', '米白', '恒生纺织', NULL, NULL, 'REWORK',   NULL, NULL, 1, 0),
- (15, 'C-2415', 'COTTON',   900.0, 'C-1907', '元黑', '申洲针织', NULL, NULL, 'SCRAPPED', NULL, NULL, 2, 0);
+-- 布车流转（含报废车，会被 @SQLRestriction 过滤；待排产车带交期/急单，供换色排程使用）
+INSERT INTO cloth_cart (id, cart_code, fabric_type, meters, color_code, color_name, customer, vat_id, vat_code, status, dye_start_time, dye_end_time, rework_times, due_time, urgent, deleted) VALUES
+ (1,  'C-2401', 'COTTON',  1250.0, 'C-1901', '藏青', '申洲针织', 1,  'V-01', 'DYEING',   '2026-09-27 08:00:00', '2026-09-27 11:30:00', 0, NULL, 0, 0),
+ (2,  'C-2402', 'POLY',     860.0, 'C-1902', '酒红', '雅戈尔',   2,  'V-02', 'DYEING',   '2026-09-27 08:30:00', '2026-09-27 12:00:00', 0, NULL, 0, 0),
+ (3,  'C-2403', 'NYLON',   1520.0, 'C-1903', '墨绿', '申洲针织', 3,  'V-03', 'DYEING',   '2026-09-27 09:00:00', '2026-09-27 12:30:00', 0, NULL, 0, 0),
+ (4,  'C-2404', 'BLEND',    980.0, 'C-1904', '芥黄', '鲁泰纺织', 4,  'V-04', 'DYEING',   '2026-09-27 09:30:00', '2026-09-27 13:00:00', 0, NULL, 0, 0),
+ (5,  'C-2405', 'VISCOSE', 1100.0, 'C-1905', '雪青', '华孚色纺', 5,  'V-05', 'DYEING',   '2026-09-27 10:00:00', '2026-09-27 13:30:00', 0, NULL, 0, 0),
+ (6,  'C-2406', 'COTTON',   760.0, 'C-1908', '湖蓝', '雅戈尔',   NULL, NULL, 'PENDING',  NULL, NULL, 0, '2026-10-04 18:00:00', 0, 0),
+ (7,  'C-2407', 'POLY',    1340.0, 'C-1907', '元黑', '申洲针织', NULL, NULL, 'PENDING',  NULL, NULL, 0, '2026-10-03 18:00:00', 1, 0),
+ (8,  'C-2408', 'SILK',     420.0, 'C-1906', '米白', '恒生纺织', NULL, NULL, 'PENDING',  NULL, NULL, 0, '2026-10-06 18:00:00', 0, 0),
+ (9,  'C-2409', 'COTTON',  1580.0, 'C-1901', '藏青', '恒生纺织', NULL, NULL, 'PENDING',  NULL, NULL, 0, '2026-10-05 18:00:00', 0, 0),
+ (10, 'C-2410', 'COTTON',  1050.0, 'C-1908', '湖蓝', '雅戈尔',   6,  'V-06', 'DONE',     '2026-09-26 08:00:00', '2026-09-26 11:00:00', 0, NULL, 0, 0),
+ (11, 'C-2411', 'POLY',    1210.0, 'C-1902', '酒红', '雅戈尔',   7,  'V-07', 'DONE',     '2026-09-26 09:00:00', '2026-09-26 12:30:00', 0, NULL, 0, 0),
+ (12, 'C-2412', 'NYLON',    890.0, 'C-1903', '墨绿', '申洲针织', 8,  'V-08', 'DONE',     '2026-09-26 13:00:00', '2026-09-26 16:30:00', 0, NULL, 0, 0),
+ (13, 'C-2413', 'VISCOSE',  640.0, 'C-1905', '雪青', '华孚色纺', 9,  'V-09', 'DONE',     '2026-09-26 14:00:00', '2026-09-26 17:00:00', 0, NULL, 0, 0),
+ (14, 'C-2414', 'SILK',     380.0, 'C-1906', '米白', '恒生纺织', NULL, NULL, 'REWORK',   NULL, NULL, 1, '2026-10-06 12:00:00', 0, 0),
+ (15, 'C-2415', 'COTTON',   900.0, 'C-1907', '元黑', '申洲针织', NULL, NULL, 'SCRAPPED', NULL, NULL, 2, NULL, 0, 0),
+-- 换色排程验收新增车（16~28）：深浅连续切换 / 急单 / 缺资料 / 超容量 / 机型不适配 / 维护冲突 / 特殊染料
+ (16, 'C-2416', 'COTTON',  1100.0, 'C-1901', '藏青', '恒生纺织', NULL, NULL, 'PENDING', NULL, NULL, 0, '2026-10-04 18:00:00', 0, 0),
+ (17, 'C-2417', 'COTTON',  1200.0, 'C-1906', '米白', '华孚色纺', NULL, NULL, 'PENDING', NULL, NULL, 0, '2026-10-05 12:00:00', 0, 0),
+ (18, 'C-2418', 'COTTON',   900.0, 'C-1908', '湖蓝', '鲁泰纺织', NULL, NULL, 'PENDING', NULL, NULL, 0, '2026-10-05 18:00:00', 0, 0),
+ (19, 'C-2419', 'POLY',    1000.0, 'C-1902', '酒红', '雅戈尔',   NULL, NULL, 'PENDING', NULL, NULL, 0, '2026-10-04 12:00:00', 1, 0),
+ (20, 'C-2420', 'NYLON',    700.0, 'C-1903', '墨绿', '申洲针织', NULL, NULL, 'PENDING', NULL, NULL, 0, '2026-10-05 18:00:00', 0, 0),
+ (21, 'C-2421', 'BLEND',    800.0, 'C-1904', '芥黄', '鲁泰纺织', NULL, NULL, 'PENDING', NULL, NULL, 0, '2026-10-06 18:00:00', 0, 0),
+ (22, 'C-2422', 'VISCOSE',  650.0, 'C-1905', '雪青', '华孚色纺', NULL, NULL, 'PENDING', NULL, NULL, 0, '2026-10-06 18:00:00', 0, 0),
+ (23, 'C-2423', 'SILK',     300.0, 'C-1906', '米白', '恒生纺织', NULL, NULL, 'PENDING', NULL, NULL, 0, '2026-10-04 18:00:00', 1, 0),
+ (24, 'C-2424', 'POLY',    1100.0, 'C-1907', '元黑', '申洲针织', NULL, NULL, 'PENDING', NULL, NULL, 0, '2026-10-06 18:00:00', 0, 0),
+ (25, 'C-2425', 'COTTON',   850.0, 'C-1908', '湖蓝', '雅戈尔',   NULL, NULL, 'PENDING', NULL, NULL, 0, '2026-10-05 18:00:00', 0, 0),
+ (26, 'C-2426', 'COTTON',  4600.0, 'C-1901', '藏青', '申洲针织', NULL, NULL, 'PENDING', NULL, NULL, 0, '2026-10-06 18:00:00', 0, 0),
+ (27, 'C-2427', 'POLY',     400.0, 'C-1902', '酒红', '雅戈尔',   NULL, NULL, 'PENDING', NULL, NULL, 0, '2026-10-06 18:00:00', 0, 0),
+ (28, 'C-2428', 'POLY',     720.0, 'C-1907', '元黑', '雅戈尔',   NULL, NULL, 'PENDING', NULL, NULL, 0, '2026-10-03 12:00:00', 1, 0),
+ (29, 'C-2429', 'WOOL',     300.0, 'C-1903', '墨绿', '申洲针织', NULL, NULL, 'PENDING', NULL, NULL, 0, '2026-10-06 18:00:00', 0, 0);
 
 -- 染料与助剂库存（13 行）
 INSERT INTO chemical_stock (id, chem_code, chem_name, category, unit, stock_kg, safety_kg, batch_no, expire_date, unit_price, supplier, deleted) VALUES
@@ -398,3 +503,77 @@ INSERT INTO issue_record (id, stock_id, chem_code, chem_name, qty_kg, operator, 
  (16, 9,  'AX-2001', '匀染剂 AL-200',    6.50, '张伟',   'R-2403', 'C-2412', '2026-09-26 13:10:00', 0),
  (17, 10, 'AX-2002', '元明粉(盐)',     150.00, '陈晓芳', 'R-2405', 'C-2413', '2026-09-26 14:05:00', 0),
  (18, 7,  'DC-1007', '酸性绿 25',       19.70, '刘志强', 'R-2403', 'C-2412', '2026-09-26 13:15:00', 0);
+
+-- ============================================================
+-- 换色排程台种子：清洗规则版本 / 维护时段 / 人工锁定段
+-- ============================================================
+
+-- 清洗矩阵 V1：四类切换 SAME 同色续染 / LIGHT_TO_DEEP 浅转深 / DEEP_TO_LIGHT 深转浅 / SPECIAL 特殊染料切换
+-- rows 为颜色族对（from_family/to_family）的逐族覆写，未命中时走分类默认值；colorFamilies 维护色号→颜色族+深浅档+特殊染料标记
+INSERT INTO cleaning_rule_version (id, version_code, status, matrix_json, fabric_machine_json, params_json, remark, created_by, create_time, archived_time) VALUES
+ (1, 'RV-20261001-01', 'ACTIVE',
+  JSON_OBJECT(
+    'colorFamilies', JSON_ARRAY(
+      JSON_OBJECT('familyCode','NAVY',   'familyName','藏青族', 'colorCodes', JSON_ARRAY('C-1901'), 'shade','DEEP',  'special', FALSE),
+      JSON_OBJECT('familyCode','WINE',   'familyName','酒红族', 'colorCodes', JSON_ARRAY('C-1902'), 'shade','DEEP',  'special', FALSE),
+      JSON_OBJECT('familyCode','GREEN',  'familyName','墨绿族', 'colorCodes', JSON_ARRAY('C-1903'), 'shade','DEEP',  'special', FALSE),
+      JSON_OBJECT('familyCode','MUSTARD','familyName','芥黄族', 'colorCodes', JSON_ARRAY('C-1904'), 'shade','LIGHT', 'special', FALSE),
+      JSON_OBJECT('familyCode','VIOLET', 'familyName','雪青族', 'colorCodes', JSON_ARRAY('C-1905'), 'shade','MID',   'special', TRUE,  'specialName','阳离子染料'),
+      JSON_OBJECT('familyCode','WHITE',  'familyName','米白族', 'colorCodes', JSON_ARRAY('C-1906'), 'shade','LIGHT', 'special', FALSE),
+      JSON_OBJECT('familyCode','BLACK',  'familyName','元黑族', 'colorCodes', JSON_ARRAY('C-1907'), 'shade','DEEP',  'special', FALSE),
+      JSON_OBJECT('familyCode','BLUE',   'familyName','湖蓝族', 'colorCodes', JSON_ARRAY('C-1908'), 'shade','MID',   'special', FALSE)
+    ),
+    'categoryDefaults', JSON_ARRAY(
+      JSON_OBJECT('category','SAME',           'washMinutes', 10,  'costYuan', 80,   'label','同色续染'),
+      JSON_OBJECT('category','LIGHT_TO_DEEP',  'washMinutes', 30,  'costYuan', 260,  'label','浅转深'),
+      JSON_OBJECT('category','DEEP_TO_LIGHT',  'washMinutes', 90,  'costYuan', 860,  'label','深转浅'),
+      JSON_OBJECT('category','SPECIAL',        'washMinutes', 120, 'costYuan', 1200, 'label','特殊染料切换')
+    ),
+    'rows', JSON_ARRAY(
+      JSON_OBJECT('fromFamily','BLACK', 'toFamily','NAVY',  'category','LIGHT_TO_DEEP', 'washMinutes', 35,  'costYuan', 300),
+      JSON_OBJECT('fromFamily','NAVY',  'toFamily','BLACK', 'category','SAME',           'washMinutes', 20,  'costYuan', 150),
+      JSON_OBJECT('fromFamily','WINE',  'toFamily','VIOLET','category','SPECIAL',        'washMinutes', 120, 'costYuan', 1200),
+      JSON_OBJECT('fromFamily','VIOLET','toFamily','WINE',  'category','SPECIAL',        'washMinutes', 120, 'costYuan', 1200),
+      JSON_OBJECT('fromFamily','BLUE',  'toFamily','WHITE', 'category','DEEP_TO_LIGHT',  'washMinutes', 90,  'costYuan', 860),
+      JSON_OBJECT('fromFamily','WHITE', 'toFamily','BLUE',  'category','LIGHT_TO_DEEP',  'washMinutes', 30,  'costYuan', 260)
+    )
+  ),
+  JSON_OBJECT(
+    'fabricMachines', JSON_ARRAY(
+      JSON_OBJECT('fabricType','COTTON',  'fabricName','全棉针织', 'machineTypes', JSON_ARRAY('OVERFLOW','AIRFLOW')),
+      JSON_OBJECT('fabricType','POLY',    'fabricName','涤纶机织', 'machineTypes', JSON_ARRAY('AIRFLOW')),
+      JSON_OBJECT('fabricType','NYLON',   'fabricName','锦纶弹力', 'machineTypes', JSON_ARRAY('OVERFLOW')),
+      JSON_OBJECT('fabricType','BLEND',   'fabricName','涤棉混纺', 'machineTypes', JSON_ARRAY('OVERFLOW','AIRFLOW')),
+      JSON_OBJECT('fabricType','VISCOSE', 'fabricName','人棉针织', 'machineTypes', JSON_ARRAY('AIRFLOW')),
+      JSON_OBJECT('fabricType','SILK',    'fabricName','真丝',     'machineTypes', JSON_ARRAY('JIG')),
+      JSON_OBJECT('fabricType','WOOL',    'fabricName','羊毛精纺', 'machineTypes', JSON_ARRAY('JET'))
+    )
+  ),
+  JSON_OBJECT(
+    'metersToKg', 0.18,
+    'slotMinutes', 15,
+    'horizonDays', 5,
+    'horizonStart', '2026-10-03T08:00:00',
+    'urgentLatenessWeight', 60.0,
+    'latenessWeight', 12.0,
+    'idleWeight', 0.35,
+    'washCostWeight', 1.0,
+    'newVatPenaltyYuan', 120.0,
+    'washGapIdleFree', TRUE,
+    'notes','急单逾期 60 元/分钟、普通逾期 12 元/分钟，远高于最深清洗 1200 元，防止为省清洗长期压急单'
+  ),
+  '初版清洗矩阵：同色/浅转深/深转浅/特殊染料四类 + 逐颜色族覆写', '调度员', '2026-10-01 09:00:00', NULL);
+
+-- 维护时段（5 段）：V-04/V-07 两台卷染机长检修，真丝急单在交期内无 JIG 可用（验收维护窗口）
+INSERT INTO vat_maintenance (id, vat_id, vat_code, start_time, end_time, reason, create_time, deleted) VALUES
+ (1, 4,  'V-04', '2026-10-03 08:00:00', '2026-10-05 20:00:00', '卷染机密封件更换 + 夹棍保养（计划检修）', '2026-10-01 10:00:00', 0),
+ (2, 7,  'V-07', '2026-10-03 08:00:00', '2026-10-07 08:00:00', '卷染辊筒更换 + 导轨保养（计划检修）',     '2026-10-01 10:05:00', 0),
+ (3, 10, 'V-10', '2026-10-03 08:00:00', '2026-10-05 20:00:00', '卷染机温控改造（与 V-04 同期，真丝产能受限）', '2026-10-01 10:10:00', 0),
+ (4, 9,  'V-09', '2026-10-04 08:00:00', '2026-10-04 14:00:00', '溢流阀清洗，上午不可用',                 '2026-10-01 10:20:00', 0),
+ (5, 8,  'V-08', '2026-10-03 18:00:00', '2026-10-03 20:00:00', '气流喷嘴点检（2 小时短窗）',             '2026-10-01 10:30:00', 0);
+
+-- 人工锁定段（2 段）：已向客户承诺的缸与时段，重算只能绕开不能移动
+-- 锁1：急单元黑（POLY）锁 V-08 10/03 08:00 起；锁2：藏青锁 V-09 10/04 下午（避开 V-09 上午维护）
+INSERT INTO schedule_lock (id, cart_id, cart_code, vat_id, vat_code, start_time, end_time, note, rule_version_id, locked_by, locked_time, deleted) VALUES
+ (1, 28, 'C-2428', 8,  'V-08', '2026-10-03 08:00:00', '2026-10-03 10:35:00', '已向雅戈尔承诺 10/03 上午开缸（急单）', 1, '调度员', '2026-10-01 11:00:00', 0),
+ (2, 16, 'C-2416', 9,  'V-09', '2026-10-04 14:00:00', '2026-10-04 15:55:00', '恒生大单承诺 10/04 下午 V-09',          1, '调度员', '2026-10-01 11:10:00', 0);
