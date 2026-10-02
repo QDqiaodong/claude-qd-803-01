@@ -57,3 +57,30 @@ export const stockOverview = () => http.get('/inventory/overview')
 export const stockAlerts = () => http.get('/inventory/alerts')
 export const issueStock = (payload) => http.post('/inventory/issue', payload)
 export const listIssues = () => http.get('/inventory/issues')
+
+/* ============ 染缸换色排程台 ============ */
+export const scheduleContext = () => http.get('/schedule/context')
+export const patchCartSchedule = (id, payload) => http.patch(`/schedule/carts/${id}`, payload)
+
+export const listMaintenance = () => http.get('/schedule/maintenance')
+export const createMaintenance = (payload) => http.post('/schedule/maintenance', payload)
+export const deleteMaintenance = (id) => http.delete(`/schedule/maintenance/${id}`)
+
+export const listScheduleLocks = () => http.get('/schedule/locks')
+export const createScheduleLock = (payload) => http.post('/schedule/locks', payload)
+export const deleteScheduleLock = (id) => http.delete(`/schedule/locks/${id}`)
+
+export const listFamilies = () => http.get('/schedule/families')
+export const listWashVersions = () => http.get('/schedule/wash-versions')
+export const getWashMatrix = (versionId) =>
+  http.get('/schedule/wash-matrix', { params: versionId ? { versionId } : {} })
+export const publishWashVersion = (payload) => http.post('/schedule/wash-versions', payload)
+
+export const generateSchedule = (payload) => http.post('/schedule/plans/generate', payload)
+export const getScheduleJob = (jobId) => http.get(`/schedule/jobs/${jobId}`)
+export const listSchedulePlans = () => http.get('/schedule/plans')
+export const getSchedulePlan = (id) => http.get(`/schedule/plans/${id}`)
+export const markPlanReference = (id) => http.post(`/schedule/plans/${id}/reference`)
+export const renameSchedulePlan = (id, planName) => http.patch(`/schedule/plans/${id}/name`, { planName })
+export const replaySchedulePlan = (id, createdBy) =>
+  http.post(`/schedule/plans/${id}/replay`, { createdBy })

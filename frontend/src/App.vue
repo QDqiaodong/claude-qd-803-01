@@ -28,7 +28,7 @@
       <div class="grid-panel">
         <div class="grid-panel__head">
           <span class="grid-panel__title">印染车间 · 模块启动台</span>
-          <span class="grid-panel__hint">点击格子切换模块（{{ routes.length }} 个入口 / 6 个模块）</span>
+          <span class="grid-panel__hint">点击格子切换模块（{{ routes.length }} 个入口 / 7 个模块）</span>
         </div>
         <div class="grid-9">
           <div
@@ -57,6 +57,9 @@ import { currentLocation, currentRoute, navigate, routes } from './router'
 const menuOpen = ref(false)
 
 const ICONS = {
+  schedule: ['M3 5h18', 'M3 5v14h18V5', 'M3 10h18', 'M7 5v14', 'M12 14l2-4 2 2 2-5'],
+  plans: ['M4 4h16v6H4z', 'M4 14h16v6H4z', 'M8 7h8', 'M8 17h5'],
+  matrix: ['M4 4h7v7H4z', 'M13 4h7v7h-7z', 'M4 13h7v7H4z', 'M13 13h7v7h-7z'],
   vat: ['M5 6h14', 'M6 6v11a3 3 0 003 3h6a3 3 0 003-3V6', 'M5 11h14', 'M9 15h6'],
   recipe: ['M4 5h16v14H4z', 'M8 9h8', 'M8 13h8', 'M8 17h5'],
   curve: ['M3 20h18', 'M3 20V4', 'M5 17l4-8 3 5 5-10'],

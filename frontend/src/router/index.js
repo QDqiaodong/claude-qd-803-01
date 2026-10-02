@@ -5,12 +5,13 @@ import CurveEditor from '../views/CurveEditor.vue'
 import CartKanban from '../views/CartKanban.vue'
 import ExecutionOrders from '../views/ExecutionOrders.vue'
 import Inventory from '../views/Inventory.vue'
+import ScheduleBoard from '../views/ScheduleBoard.vue'
 
 /**
- * 六个业务模块。启动台 10 个格子共用这些页面，
- * 其中 4 个格子是带预设参数的快捷入口（同一页面不同落点）。
+ * 业务模块。启动台格子共用这些页面，部分格子是带预设参数的快捷入口（同一页面不同落点）。
  */
 export const routes = [
+  { path: '/schedule', name: '染缸换色排程台', desc: '跨缸计划 · 清洗矩阵 · 锁定与复算', icon: 'schedule', component: ScheduleBoard, query: {} },
   { path: '/vats', name: '染缸缸位', desc: '温度环阵列 · 控温面板', icon: 'vat', component: VatBoard, query: {} },
   { path: '/recipes', name: '染色配方', desc: '色卡条 · 染料阶梯表', icon: 'recipe', component: RecipeLab, query: {} },
   { path: '/curves', name: '工艺曲线', desc: 'SVG 节点可拖动编辑器', icon: 'curve', component: CurveEditor, query: {} },
@@ -19,6 +20,8 @@ export const routes = [
   { path: '/inventory', name: '染化料库存', desc: '库存 · 预警 · 领用', icon: 'stock', component: Inventory, query: {} },
   { path: '/vats', name: '在制缸位', desc: '只看升温/保温中的缸', icon: 'running', component: VatBoard, query: { view: 'running' } },
   { path: '/recipes', name: '色号缸次', desc: '按色号统计缸次与米数', icon: 'stat', component: RecipeLab, query: { view: 'stat' } },
+  { path: '/schedule', name: '排程方案库', desc: '留存方案对比 · 选定车间参考', icon: 'plans', component: ScheduleBoard, query: { tab: 'plans' } },
+  { path: '/schedule', name: '清洗矩阵', desc: '颜色族切换时长与成本口径', icon: 'matrix', component: ScheduleBoard, query: { tab: 'matrix' } },
   { path: '/inventory', name: '染料库存', desc: '只看染料（DYE）', icon: 'dye', component: Inventory, query: { tab: 'DYE' } },
   { path: '/inventory', name: '库存预警', desc: '低于安全库存的染化料', icon: 'alert', component: Inventory, query: { tab: 'alerts' } }
 ]

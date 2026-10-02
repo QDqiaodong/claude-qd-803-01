@@ -62,6 +62,14 @@ public class ClothCart {
     @Column(name = "dye_end_time")
     private LocalDateTime dyeEndTime;
 
+    /** 客户交期（换色排程台维护，仅排程参考，不改布车流转状态） */
+    @Column(name = "due_time")
+    private LocalDateTime dueTime;
+
+    /** 急单标记：0 普通 / 1 急单（排程时优先保交期，允许以清洗成本换时间） */
+    @Column(name = "rush_flag")
+    private Integer rushFlag = 0;
+
     /** 返修次数 */
     @Column(name = "rework_times")
     private Integer reworkTimes;
